@@ -10,7 +10,7 @@ module I18nRouting
   def self.translation_for(name, type = :resources, option = nil)
     # First, if an option is given, try to get the translation in the routes scope
     if option
-      t = Admin::AppConfig.get("#{I18n.locale}.routes.#{name}.#{type}.option")
+      t = Admin::AppConfig.get("#{I18n.locale}.routes.#{name}.#{type}.#{option}")
       return t
     else
       # Try to get the translation in routes namescope first
