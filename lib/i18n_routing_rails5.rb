@@ -57,12 +57,12 @@ module I18nRouting
 
                   # In the resource(s) block, we need to keep and restore some context :
                   if block
-                    old_name = @scope[:options][:i18n_real_resource_name]
-                    old = @scope[:options][:scope_level_resource]
+                    old_name = @scope[:i18n_real_resource_name]
+                    old = @scope[:scope_level_resource]
 
-                    @scope[:options][:i18n_real_resource_name] = resource.name
-                    @scope[:options][:i18n_scope_level_resource] = old
-                    @scope[:options][:scope_level_resource] = resource
+                    @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(i18n_real_resource_name: resource.name))  # total hack :)
+                    @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(i18n_scope_level_resource: old))  # total hack :)
+                    @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: resource))  # total hack :)
 
                     if type == :resource and @scope[:name_prefix]
                       # Need to fake name_prefix for singleton resource
@@ -71,12 +71,11 @@ module I18nRouting
 
                     block.call if block
 
-                    @scope[:options][:scope_level_resource] = old
-                    @scope[:options][:i18n_real_resource_name] = old_name
+                    @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: old))
+                    @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(i18n_real_resource_name: old_name))
                   end
 
-                  @scope[:options][:i18n_scope_level_resource] = nil
-
+                  @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(i18n_scope_level_resource: nil))
                 end
               end
             end
@@ -111,7 +110,7 @@ module I18nRouting
 
     # Return the aproximate deep in scope level
     def nested_deep
-      (@scope and Array === @scope[:options][:nested_deep] and @scope[:scope_level]) ? @scope[:options][:nested_deep].size : 0
+      (@scope and Array === @scope[:nested_deep] and @scope[:scope_level]) ? @scope[:nested_deep].size : 0
     end
 
     public
@@ -226,9 +225,8 @@ module I18nRouting
     def create_globalized_resources(type, *resources, &block)
       #puts "#{' ' * nested_deep}Call #{type} : #{resources.inspect} (#{@locales.inspect}) (#{@localized_branch}) (#{@skip_localization})"
 
-      @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(options: {})) unless @scope[:options]  # total hack :)
-      @scope[:options][:nested_deep] ||= []
-      @scope[:options][:nested_deep] << 1
+      @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(nested_deep: [])) unless @scope[:nested_deep]  # total hack :)
+      @scope[:nested_deep] << 1
 
       cur_scope = nil
       if @locales
@@ -252,7 +250,7 @@ module I18nRouting
         end
       end
 
-      @scope[:options][:nested_deep].pop
+      @scope[:nested_deep].pop
     end
 
     # Alias methods in order to handle i18n routes
@@ -266,9 +264,9 @@ module I18nRouting
       [:map_method, :member, :collection].each do |m|
         rfname = "#{m}_without_i18n_routing".to_sym
         mod.send :define_method, "#{m}_with_i18n_routing".to_sym do |*args, &block|
-          if @localized_branch and @scope[:options][:i18n_scope_level_resource] and @scope[:options][:i18n_real_resource_name]
-            o = @scope[:options][:scope_level_resource]
-            @scope[:options][:scope_level_resource] = @scope[:options][:i18n_scope_level_resource]
+          if @localized_branch and @scope[:i18n_scope_level_resource] and @scope[:i18n_real_resource_name]
+            o = @scope[:scope_level_resource]
+            @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: @scope[:i18n_scope_level_resource]))
 
             pname = @scope[:path_names] || {}
             flattened_args = args.flatten
@@ -278,10 +276,10 @@ module I18nRouting
               i += 1
             end
 
-            scope(:path_names => I18nRouting.path_names(@scope[:options][:i18n_real_resource_name], {:path_names => pname})) do
+            scope(:path_names => I18nRouting.path_names(@scope[:i18n_real_resource_name], {:path_names => pname})) do
               send(rfname, *args, &block)
             end
-            @scope[:options][:scope_level_resource] = o
+            @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: o))
             return
           end
 
