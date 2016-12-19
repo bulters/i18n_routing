@@ -3,6 +3,7 @@ require 'action_dispatch/journey/router'
 require 'action_dispatch'
 require 'active_support/core_ext/module'
 
+
 module I18nRouting
   module Mapper
 
@@ -115,25 +116,7 @@ module I18nRouting
 
     public
 
-    # On Routing::Mapper initialization (when doing Application.routes.draw do ...)
-    # prepare routing system to be i18n ready
-    def initialize_with_i18n_routing(*args)
-      initialize_without_i18n_routing(*args)
 
-      # Extends the current RouteSet in order to define localized helper for named routes
-      # When calling define_url_helper, it calls define_localized_url_helper too.
-      if !@set.named_routes.respond_to?(:define_localized_url_helper)
-        @set.named_routes.class_eval <<-END_EVAL, __FILE__, __LINE__ + 1
-          alias_method :localized_define_url_helper, :define_url_helper
-          def define_url_helper(mod, route, name, opts, route_key, url_strategy)
-            localized_define_url_helper(mod, route, name, opts, route_key, url_strategy)
-            define_localized_url_helper(mod, route, name, opts, route_key, url_strategy)
-          end
-        END_EVAL
-
-        @set.named_routes.extend I18nRouting::NamedRouteCollection
-      end
-    end
 
     # Rails 3 routing system
     # Create a block for localized routes, in your routes.rb :
@@ -253,17 +236,103 @@ module I18nRouting
       @scope[:nested_deep].pop
     end
 
-    # Alias methods in order to handle i18n routes
-    def self.included(mod)
-      mod.send :alias_method_chain, :initialize, :i18n_routing
-      mod.send :alias_method_chain, :resource, :i18n_routing
-      mod.send :alias_method_chain, :resources, :i18n_routing
+
+
+    module MapperExtensions
+
+      def resource(*resources, &block)
+        create_globalized_resources(:resource, *resources, &block)
+      end
+
+      def resources(*resources, &block)
+        create_globalized_resources(:resources, *resources, &block)
+      end
+
+      # from rails 5.0.0.1, actionpack/lib/action_dispatch/routing/mapper.rb, line 1269
+      def resource_without_i18n_routing(*resources, &block)
+        options = resources.extract_options!.dup
+
+        if apply_common_behavior_for(:resource, resources, options, &block)
+          return self
+        end
+
+        with_scope_level(:resource) do
+          options = apply_action_options options
+          resource_scope(ActionDispatch::Routing::Mapper::SingletonResource.new(resources.pop, api_only?, @scope[:shallow], options)) do
+            yield if block_given?
+
+            concerns(options[:concerns]) if options[:concerns]
+
+            collection do
+              post :create
+            end if parent_resource.actions.include?(:create)
+
+            new do
+              get :new
+            end if parent_resource.actions.include?(:new)
+
+            set_member_mappings_for_resource
+          end
+        end
+
+        self
+      end
+
+      # from rails 5.0.0.1, actionpack/lib/action_dispatch/routing/mapper.rb, line 1430
+      def resources_without_i18n_routing(*resources, &block)
+        options = resources.extract_options!.dup
+
+        if apply_common_behavior_for(:resources, resources, options, &block)
+          return self
+        end
+
+        with_scope_level(:resources) do
+          options = apply_action_options options
+          resource_scope(ActionDispatch::Routing::Mapper::Resource.new(resources.pop, api_only?, @scope[:shallow], options)) do
+            yield if block_given?
+
+            concerns(options[:concerns]) if options[:concerns]
+
+            collection do
+              get  :index if parent_resource.actions.include?(:index)
+              post :create if parent_resource.actions.include?(:create)
+            end
+
+            new do
+              get :new
+            end if parent_resource.actions.include?(:new)
+
+            set_member_mappings_for_resource
+          end
+        end
+
+        self
+      end
+
+      # On Routing::Mapper initialization (when doing Application.routes.draw do ...)
+      # prepare routing system to be i18n ready
+      def initialize(*args)
+        super(*args)
+
+        # Extends the current RouteSet in order to define localized helper for named routes
+        # When calling define_url_helper, it calls define_localized_url_helper too.
+        if !@set.named_routes.respond_to?(:define_localized_url_helper)
+          @set.named_routes.class_eval <<-END_EVAL, __FILE__, __LINE__ + 1
+            alias_method :localized_define_url_helper, :define_url_helper
+            def define_url_helper(mod, route, name, opts, route_key, url_strategy)
+              localized_define_url_helper(mod, route, name, opts, route_key, url_strategy)
+              define_localized_url_helper(mod, route, name, opts, route_key, url_strategy)
+            end
+          END_EVAL
+
+          @set.named_routes.extend I18nRouting::NamedRouteCollection
+        end
+      end
 
       # Here we redefine some methods, in order to handle
       # correct path_names translation on the fly
       [:map_method, :member, :collection].each do |m|
-        rfname = "#{m}_without_i18n_routing".to_sym
-        mod.send :define_method, "#{m}_with_i18n_routing".to_sym do |*args, &block|
+        define_method "#{m}".to_sym do |*args, &block|
           if @localized_branch and @scope[:i18n_scope_level_resource] and @scope[:i18n_real_resource_name]
             o = @scope[:scope_level_resource]
             @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: @scope[:i18n_scope_level_resource]))
@@ -277,26 +346,24 @@ module I18nRouting
             end
 
             scope(:path_names => I18nRouting.path_names(@scope[:i18n_real_resource_name], {:path_names => pname})) do
-              send(rfname, *args, &block)
+              super *args, &block
             end
             @scope.instance_variable_set(:@hash, @scope.instance_variable_get(:@hash).merge(scope_level_resource: o))
             return
           end
 
-          send(rfname, *args, &block)
+          super *args, &block
         end
-
-        mod.send :alias_method_chain, m, :i18n_routing
       end
+
     end
 
-    def resource_with_i18n_routing(*resources, &block)
-      create_globalized_resources(:resource, *resources, &block)
+
+    # Alias methods in order to handle i18n routes
+    def self.included(mod)
+      mod.prepend(MapperExtensions)
     end
 
-    def resources_with_i18n_routing(*resources, &block)
-      create_globalized_resources(:resources, *resources, &block)
-    end
   end
 
   # Used for localize simple named routes
@@ -390,30 +457,32 @@ module I18nRouting
   # Journey::Route module
   # Exists in order to use appropriate localized route when using url_for
   module JourneyRoute
-    # Alias methods in order to handle i18n routes
-    def self.included(mod)
-      mod.send :alias_method_chain, :initialize, :i18n_routing
-      mod.send :alias_method_chain, :score, :i18n_routing
-    end
 
-    # During route initialization, if a condition locale is present
-    # Delete it, store it in @locale, and add it to @defaults
-    def initialize_with_i18n_routing(name, app, path, constraints, required_defaults, defaults, request_method_match, precedence, internal = false)
-      @locale = if constraints.key?(:locale)
-        c = constraints.delete(:locale)
-        # In rails 3.0 it's a regexp otherwise it's a string, so we need to call source on the regexp
-        (c.respond_to?(:source) ? c.source : c).to_sym
-      else
-        nil
+    module I18nExtenisons
+      # During route initialization, if a condition locale is present
+      # Delete it, store it in @locale, and add it to @defaults
+      def initialize(name, app, path, constraints, required_defaults, defaults, request_method_match, precedence, internal = false)
+        @locale = if constraints.key?(:locale)
+          c = constraints.delete(:locale)
+          # In rails 3.0 it's a regexp otherwise it's a string, so we need to call source on the regexp
+          (c.respond_to?(:source) ? c.source : c).to_sym
+        else
+          nil
+        end
+        super(name, app, path, constraints, required_defaults, defaults, request_method_match, precedence, internal)
       end
-      initialize_without_i18n_routing(name, app, path, constraints, required_defaults, defaults, request_method_match, precedence, internal)
+
+      # Return low score for routes that don't match the current locale
+      def score constraints
+        return -1 if @locale && @locale != I18n.locale.to_sym
+        super constraints
+      end
     end
 
-    # Return low score for routes that don't match the current locale
-    def score_with_i18n_routing constraints
-      return -1 if @locale && @locale != I18n.locale.to_sym
-      score_without_i18n_routing constraints
+    def self.included(mod)
+      mod.prepend(I18nExtenisons)
     end
+
   end
 end
 
